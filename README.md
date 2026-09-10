@@ -6,6 +6,9 @@ Small OpenTelemetry tracing helpers for Go services.
 depend only on the OpenTelemetry API. Exporter setup and logging integrations
 live in separate `contrib` modules.
 
+OpenTelemetry API/SDK minimum: v1.45.0. Logging integrations require the Logs
+API/SDK v0.21.0 or newer; the SDK uses semantic conventions v1.43.0.
+
 ## Install
 
 ```bash

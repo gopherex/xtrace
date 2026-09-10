@@ -40,7 +40,8 @@ release:
 	fi
 
 	mods="$(MODDIRS)"
-	cur="$$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+	# A contrib may have a newer release than the root module.
+	cur="$$(git tag -l | sed 's#^.*/##' | sed -nE 's/^v([0-9]+\.[0-9]+\.[0-9]+)$$/\1/p' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
 	cur="$${cur:-0.0.0}"
 	head="$$(git rev-parse --short HEAD)"
 	echo "Latest release: v$$cur    HEAD: $$head"
@@ -108,14 +109,14 @@ release:
 	  echo
 	  echo "Release v$$new; will:"
 	  echo "  - update contrib modules that already require $(ROOT_MODULE)"
-	  echo "  - commit 'release v$$new' if go.mod/go.sum changed"
+	  echo "  - commit 'chore(release): bump version to v$$new' if go.mod/go.sum changed"
 	  echo "  - create $${#TAGS[@]} tags and push"
 	  read -r -p "Type 'yes' to proceed: " ok
 	  [ "$$ok" = "yes" ] || { echo "Aborted."; exit 0; }
 
 	  update_root_requires "$$new"
 	  git add -A
-	  git diff --cached --quiet || git commit -m "release v$$new"
+	  git diff --cached --quiet || git commit -m "chore(release): bump version to v$$new"
 	  for t in "$${TAGS[@]}"; do git tag -a "$$t" -m "$$t"; done
 	  git push origin HEAD
 	  git push origin "$${TAGS[@]}"
