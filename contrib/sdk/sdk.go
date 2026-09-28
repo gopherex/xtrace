@@ -5,7 +5,9 @@ package sdk
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/host"
@@ -28,6 +30,10 @@ const (
 	DefaultMetricInterval = 30 * time.Second
 	DefaultMetricTimeout  = 10 * time.Second
 )
+
+// metricsDisabled records that the last Setup call left metrics disabled, so
+// StartHostRuntime does not register instruments nobody exports.
+var metricsDisabled atomic.Bool
 
 // Shutdown stops all providers configured by Setup.
 type Shutdown func(context.Context) error
@@ -115,6 +121,10 @@ func WithMetricReaderTiming(interval, timeout time.Duration) Option {
 // Setup configures global OpenTelemetry providers and returns a shutdown
 // function. OTLP endpoint, headers, timeouts, and protocol are read by the
 // exporters from standard OTEL_* environment variables.
+//
+// A signal is exported only when an OTLP endpoint is configured for it, via
+// OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT. A signal
+// without an endpoint is disabled as if its Without* option was passed.
 func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 	cfg := defaultConfig()
 	for _, opt := range opts {
@@ -123,6 +133,11 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	if disabled := disableSignalsWithoutEndpoint(&cfg); len(disabled) > 0 {
+		slog.Info("otel export disabled: no OTLP endpoint configured", "signals", disabled)
+	}
+	metricsDisabled.Store(!cfg.metrics)
 
 	otel.SetTextMapPropagator(cfg.propagator)
 
@@ -176,9 +191,38 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 
 // StartHostRuntime starts host and runtime instrumentation. The OTel contrib
 // helpers register observers with the global meter provider and do not expose a
-// shutdown handle.
+// shutdown handle. It is a no-op when Setup left metrics disabled.
 func StartHostRuntime() error {
+	if metricsDisabled.Load() {
+		return nil
+	}
 	return errors.Join(host.Start(), runtime.Start())
+}
+
+// disableSignalsWithoutEndpoint turns off every enabled signal that has no OTLP
+// endpoint in the environment and returns the names of the signals it turned
+// off. Signals already disabled by options are left alone.
+func disableSignalsWithoutEndpoint(cfg *config) []string {
+	signals := []struct {
+		name    string
+		env     string
+		enabled *bool
+	}{
+		{"traces", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", &cfg.traces},
+		{"metrics", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", &cfg.metrics},
+		{"logs", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", &cfg.logs},
+	}
+	generic := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+	var disabled []string
+	for _, s := range signals {
+		if !*s.enabled || os.Getenv(s.env) != "" || generic != "" {
+			continue
+		}
+		*s.enabled = false
+		disabled = append(disabled, s.name)
+	}
+	return disabled
 }
 
 func newResource(cfg config) (*resource.Resource, error) {

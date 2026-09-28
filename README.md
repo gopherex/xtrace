@@ -77,6 +77,17 @@ installing global providers, wiring shutdown, and stamping build-time service
 metadata into the resource. Exporter endpoint, protocol, headers, and timeouts
 still use the standard `OTEL_*` environment variables.
 
+A signal is exported only when an OTLP endpoint is configured for it:
+`OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` (`TRACES`, `METRICS`, `LOGS`) or the
+shared `OTEL_EXPORTER_OTLP_ENDPOINT`. With no endpoint, `Setup` disables that
+signal exactly as `WithoutTraces`, `WithoutMetrics`, or `WithoutLogs` would and
+logs one line (via `slog`) naming the disabled signals; it no longer falls back
+to the OpenTelemetry default of `localhost:4317`/`4318`. To export to a local
+collector, set the endpoint explicitly, e.g.
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`. An explicit `Without*`
+option always wins over a configured endpoint. `StartHostRuntime` is a no-op
+when metrics are disabled.
+
 Build-time metadata passed through `WithService`, `WithVersion`, and
 `WithInstanceID` overrides matching values from `OTEL_SERVICE_NAME` and
 `OTEL_RESOURCE_ATTRIBUTES`.
