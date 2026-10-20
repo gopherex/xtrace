@@ -66,10 +66,10 @@ type Option func(*config)
 
 func defaultConfig() config {
 	return config{
-		propagator:     propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}),
-		traces:         true,
-		metrics:        true,
-		logs:           true,
+		propagator: propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}),
+		traces:     true,
+		metrics:    true,
+		logs:       true,
 	}
 }
 
