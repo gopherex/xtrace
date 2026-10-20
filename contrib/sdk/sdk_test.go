@@ -5,6 +5,7 @@ import (
 	"os"
 	"slices"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -227,6 +228,38 @@ func TestStartHostRuntimeFollowsMetricsSignal(t *testing.T) {
 			}
 			if got := len(rm.ScopeMetrics) > 0; got != tt.wantMetrics {
 				t.Fatalf("host/runtime metrics registered = %v, want %v", got, tt.wantMetrics)
+			}
+		})
+	}
+}
+
+func TestReaderTimingLeavesTheStandardVariablesToTheSDK(t *testing.T) {
+	cases := []struct {
+		name               string
+		interval, timeout  string
+		option             Option
+		wantOptionsApplied int
+	}{
+		// No option, no variables: both defaults are passed.
+		{name: "defaults", wantOptionsApplied: 2},
+		// The variables are the SDK's: nothing overrides them.
+		{name: "variables", interval: "5000", timeout: "2000", wantOptionsApplied: 0},
+		// An option wins over a variable.
+		{name: "option", interval: "5000", timeout: "2000", option: WithMetricReaderTiming(time.Second, 0), wantOptionsApplied: 1},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv(envMetricInterval, c.interval)
+			t.Setenv(envMetricTimeout, c.timeout)
+
+			cfg := defaultConfig()
+			if c.option != nil {
+				c.option(&cfg)
+			}
+
+			if got := len(readerTiming(cfg)); got != c.wantOptionsApplied {
+				t.Fatalf("options = %d, want %d", got, c.wantOptionsApplied)
 			}
 		})
 	}

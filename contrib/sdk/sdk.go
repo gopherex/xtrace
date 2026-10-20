@@ -26,9 +26,18 @@ import (
 	"go.opentelemetry.io/otel/semconv/v1.43.0"
 )
 
+// Metric export timing when neither WithMetricReaderTiming nor the
+// standard OTEL_METRIC_EXPORT_INTERVAL / OTEL_METRIC_EXPORT_TIMEOUT
+// variables set it.
 const (
 	DefaultMetricInterval = 30 * time.Second
 	DefaultMetricTimeout  = 10 * time.Second
+)
+
+// Standard variables of the periodic metric reader (milliseconds).
+const (
+	envMetricInterval = "OTEL_METRIC_EXPORT_INTERVAL"
+	envMetricTimeout  = "OTEL_METRIC_EXPORT_TIMEOUT"
 )
 
 // metricsDisabled records that the last Setup call left metrics disabled, so
@@ -49,6 +58,7 @@ type config struct {
 	logs              bool
 	metricInterval    time.Duration
 	metricTimeout     time.Duration
+	views             []sdkmetric.View
 }
 
 // Option configures Setup.
@@ -60,8 +70,6 @@ func defaultConfig() config {
 		traces:         true,
 		metrics:        true,
 		logs:           true,
-		metricInterval: DefaultMetricInterval,
-		metricTimeout:  DefaultMetricTimeout,
 	}
 }
 
@@ -106,7 +114,9 @@ func WithoutTraces() Option  { return func(c *config) { c.traces = false } }
 func WithoutMetrics() Option { return func(c *config) { c.metrics = false } }
 func WithoutLogs() Option    { return func(c *config) { c.logs = false } }
 
-// WithMetricReaderTiming overrides periodic metric export timing.
+// WithMetricReaderTiming sets periodic metric export timing; a zero value
+// leaves that one to OTEL_METRIC_EXPORT_INTERVAL / OTEL_METRIC_EXPORT_TIMEOUT,
+// else to DefaultMetricInterval / DefaultMetricTimeout.
 func WithMetricReaderTiming(interval, timeout time.Duration) Option {
 	return func(c *config) {
 		if interval > 0 {
@@ -116,6 +126,38 @@ func WithMetricReaderTiming(interval, timeout time.Duration) Option {
 			c.metricTimeout = timeout
 		}
 	}
+}
+
+// WithViews adds metric views to the meter provider: per-instrument
+// aggregation (histogram buckets, exponential histograms), renames, attribute
+// filters, drops. Views apply in order; an instrument a view matches gets the
+// view's stream (see go.opentelemetry.io/otel/sdk/metric.NewView).
+func WithViews(views ...sdkmetric.View) Option {
+	return func(c *config) {
+		c.views = append(c.views, views...)
+	}
+}
+
+// readerTiming is the periodic reader's timing: the option, else the
+// standard variable (which the SDK reads itself), else the default.
+func readerTiming(cfg config) []sdkmetric.PeriodicReaderOption {
+	var opts []sdkmetric.PeriodicReaderOption
+
+	switch {
+	case cfg.metricInterval > 0:
+		opts = append(opts, sdkmetric.WithInterval(cfg.metricInterval))
+	case os.Getenv(envMetricInterval) == "":
+		opts = append(opts, sdkmetric.WithInterval(DefaultMetricInterval))
+	}
+
+	switch {
+	case cfg.metricTimeout > 0:
+		opts = append(opts, sdkmetric.WithTimeout(cfg.metricTimeout))
+	case os.Getenv(envMetricTimeout) == "":
+		opts = append(opts, sdkmetric.WithTimeout(DefaultMetricTimeout))
+	}
+
+	return opts
 }
 
 // Setup configures global OpenTelemetry providers and returns a shutdown
@@ -281,12 +323,9 @@ func newMeterProvider(ctx context.Context, res *resource.Resource, cfg config) (
 		return nil, err
 	}
 	return sdkmetric.NewMeterProvider(
-		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(
-			exp,
-			sdkmetric.WithInterval(cfg.metricInterval),
-			sdkmetric.WithTimeout(cfg.metricTimeout),
-		)),
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp, readerTiming(cfg)...)),
 		sdkmetric.WithResource(res),
+		sdkmetric.WithView(cfg.views...),
 	), nil
 }
 
