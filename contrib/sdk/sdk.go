@@ -59,6 +59,7 @@ type config struct {
 	metricInterval    time.Duration
 	metricTimeout     time.Duration
 	views             []sdkmetric.View
+	sampler           sdktrace.Sampler
 }
 
 // Option configures Setup.
@@ -125,6 +126,15 @@ func WithMetricReaderTiming(interval, timeout time.Duration) Option {
 		if timeout > 0 {
 			c.metricTimeout = timeout
 		}
+	}
+}
+
+// WithSampler sets the tracer provider's sampler. Without it the
+// OpenTelemetry default applies: OTEL_TRACES_SAMPLER /
+// OTEL_TRACES_SAMPLER_ARG, else parentbased_always_on.
+func WithSampler(sampler sdktrace.Sampler) Option {
+	return func(c *config) {
+		c.sampler = sampler
 	}
 }
 
@@ -199,7 +209,7 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 	}
 
 	if cfg.traces {
-		tp, err := newTracerProvider(ctx, res)
+		tp, err := newTracerProvider(ctx, res, cfg)
 		if err != nil {
 			_ = shutdown(ctx)
 			return nil, err
@@ -290,7 +300,7 @@ func newResource(cfg config) (*resource.Resource, error) {
 	)
 }
 
-func newTracerProvider(ctx context.Context, res *resource.Resource) (*sdktrace.TracerProvider, error) {
+func newTracerProvider(ctx context.Context, res *resource.Resource, cfg config) (*sdktrace.TracerProvider, error) {
 	exp, err := traceexport.New(ctx,
 		traceexport.WithRetry(traceexport.RetryConfig{
 			Enabled:         true,
@@ -303,10 +313,14 @@ func newTracerProvider(ctx context.Context, res *resource.Resource) (*sdktrace.T
 	if err != nil {
 		return nil, err
 	}
-	return sdktrace.NewTracerProvider(
+	opts := []sdktrace.TracerProviderOption{
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(res),
-	), nil
+	}
+	if cfg.sampler != nil {
+		opts = append(opts, sdktrace.WithSampler(cfg.sampler))
+	}
+	return sdktrace.NewTracerProvider(opts...), nil
 }
 
 func newMeterProvider(ctx context.Context, res *resource.Resource, cfg config) (*sdkmetric.MeterProvider, error) {
