@@ -45,6 +45,17 @@ user, err := xtrace.Call(ctx, tracer, "user.load",
 	})
 ```
 
+## Instrumented clients: spans only under an operation
+
+```go
+client, err := valkeyotel.NewClient(opts, valkeyotel.WithTracerProvider(scope.ChildOnly(otel.GetTracerProvider())))
+```
+
+`scope.ChildOnly(provider)` starts a span only when the context already
+carries one (local or remote). A client's background work (polling, pings,
+sweeps) creates no root traces; its commands still appear as children of the
+operations that issue them. Metrics are not affected.
+
 ## xlog
 
 `contrib/libs/xlog` wraps the existing `github.com/gopherex/xlog/contrib/libs/otel`
