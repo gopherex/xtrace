@@ -3,6 +3,7 @@ package span_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"go.opentelemetry.io/otel/codes"
@@ -92,5 +93,75 @@ func TestRecoverPanics(t *testing.T) {
 	spans := ended()
 	if spans[0].Status.Code != codes.Error {
 		t.Fatalf("status = %v, want error", spans[0].Status.Code)
+	}
+}
+
+// stackErr carries the stack captured where it was made.
+type stackErr struct{ stack string }
+
+func (e stackErr) Error() string { return "fault" }
+
+func stackOf(err error) string {
+	var s stackErr
+	if errors.As(err, &s) {
+		return s.stack
+	}
+	return ""
+}
+
+// WithStackTrace records the error's own stack as exception.stacktrace; an
+// error without one gets no stacktrace; an expected refusal (filtered) none.
+func TestWithStackTrace(t *testing.T) {
+	t.Parallel()
+
+	expected := errors.New("not found")
+
+	for _, tc := range []struct {
+		name  string
+		err   error
+		stack string // "" : no exception.stacktrace attribute
+		event bool
+	}{
+		{"own stack", stackErr{stack: "main.go:12\nfault.go:3"}, "main.go:12\nfault.go:3", true},
+		{"wrapped own stack", fmt.Errorf("op: %w", stackErr{stack: "deep.go:7"}), "deep.go:7", true},
+		{"no stack of its own", errors.New("plain"), "", true},
+		{"expected refusal", expected, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tracer, ended := testTracer()
+			_ = span.Run(context.Background(), tracer, "op", func(context.Context, trace.Span) error { return tc.err },
+				span.WithErrorFilter(func(err error) bool { return !errors.Is(err, expected) }),
+				span.WithStackTrace(stackOf))
+
+			sp := ended()[0]
+			if (len(sp.Events) == 1) != tc.event {
+				t.Fatalf("events %v", sp.Events)
+			}
+
+			got := ""
+			if tc.event {
+				for _, a := range sp.Events[0].Attributes {
+					if a.Key == "exception.stacktrace" {
+						got = a.Value.AsString()
+					}
+				}
+			}
+
+			if got != tc.stack {
+				t.Fatalf("exception.stacktrace %q, want %q", got, tc.stack)
+			}
+		})
+	}
+}
+
+func BenchmarkRunWithStackTrace(b *testing.B) {
+	tracer, _ := testTracer()
+	err := stackErr{stack: "main.go:12"}
+
+	for b.Loop() {
+		_ = span.Run(context.Background(), tracer, "op", func(context.Context, trace.Span) error { return err },
+			span.WithStackTrace(stackOf))
 	}
 }

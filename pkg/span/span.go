@@ -27,6 +27,7 @@ type Func2[T, U any] func(ctx context.Context, span trace.Span) (T, U, error)
 type options struct {
 	startOptions  []trace.SpanStartOption
 	errorFilter   func(error) bool
+	stackTrace    func(error) string
 	recordError   bool
 	errorStatus   bool
 	recoverPanics bool
@@ -65,6 +66,17 @@ func WithErrorFilter(filter func(error) bool) Option {
 		if filter != nil {
 			o.errorFilter = filter
 		}
+	}
+}
+
+// WithStackTrace records the stack an error carries as the exception's
+// exception.stacktrace: extract returns the stack captured where the error
+// was made (e.g. by its wrapping package), or "" for none, and then no
+// stacktrace is recorded — a stack taken at the span's end would only show
+// the helper's own frames.
+func WithStackTrace(extract func(error) string) Option {
+	return func(o *options) {
+		o.stackTrace = extract
 	}
 }
 
@@ -177,7 +189,13 @@ func finish(sp trace.Span, o options, err *error) {
 
 func handleError(sp trace.Span, o options, err error) {
 	if o.recordError {
-		sp.RecordError(err)
+		var opts []trace.EventOption
+		if o.stackTrace != nil {
+			if stack := o.stackTrace(err); stack != "" {
+				opts = append(opts, trace.WithAttributes(attribute.String("exception.stacktrace", stack)))
+			}
+		}
+		sp.RecordError(err, opts...)
 	}
 	if o.errorStatus {
 		sp.SetStatus(codes.Error, err.Error())

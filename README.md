@@ -36,6 +36,19 @@ Returned errors are recorded on the span and set span status to `Error` by
 default. Use `WithErrorFilter`, `WithoutRecordError`, or `WithoutErrorStatus`
 to tune that behavior.
 
+A technical failure with the stack captured where it was made, and an
+expected refusal that leaves the span unmarked:
+
+```go
+err := scope.Run(ctx, "charge", run,
+	xtrace.WithErrorFilter(func(err error) bool { return !fault.IsExpected(err) }),
+	xtrace.WithStackTrace(fault.Stack)) // the error's own stack as exception.stacktrace
+```
+
+`WithStackTrace(extract)` records what `extract` returns as
+`exception.stacktrace`; an empty result records none (a stack taken at the
+span's end would show only the helper's frames).
+
 For return values:
 
 ```go

@@ -68,6 +68,10 @@ func WithErrorFilter(filter func(error) bool) SpanOption {
 	return span.WithErrorFilter(filter)
 }
 
+func WithStackTrace(extract func(error) string) SpanOption {
+	return span.WithStackTrace(extract)
+}
+
 func WithoutRecordError() SpanOption { return span.WithoutRecordError() }
 func WithoutErrorStatus() SpanOption { return span.WithoutErrorStatus() }
 func WithRecoverPanics() SpanOption  { return span.WithRecoverPanics() }
