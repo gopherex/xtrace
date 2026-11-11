@@ -5,9 +5,9 @@ package sdk
 import (
 	"context"
 	"errors"
-	"sync"
 	"log/slog"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
