@@ -5,6 +5,7 @@ package sdk
 import (
 	"context"
 	"errors"
+	"sync"
 	"log/slog"
 	"os"
 	"sync/atomic"
@@ -199,13 +200,19 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 	}
 
 	var shutdowns []Shutdown
+	// The providers flush independently: a slow or dead exporter of one
+	// signal must not delay the others' flush past the context.
 	shutdown := func(ctx context.Context) error {
-		var err error
-		for i := len(shutdowns) - 1; i >= 0; i-- {
-			err = errors.Join(err, shutdowns[i](ctx))
+		errs := make([]error, len(shutdowns))
+
+		var wg sync.WaitGroup
+		for i, s := range shutdowns {
+			wg.Go(func() { errs[i] = s(ctx) })
 		}
+		wg.Wait()
+
 		shutdowns = nil
-		return err
+		return errors.Join(errs...)
 	}
 
 	if cfg.traces {
