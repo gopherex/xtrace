@@ -112,6 +112,22 @@ collector, set the endpoint explicitly, e.g.
 option always wins over a configured endpoint. `StartHostRuntime` is a no-op
 when metrics are disabled.
 
+Data that must never reach telemetry (client addresses, for example) is
+removed at export, whenever instrumentation set it:
+
+```go
+ip := []attribute.Key{"client.address", "client.port", "network.peer.address", "network.peer.port"}
+shutdown, err := sdk.Setup(ctx, sdk.WithService("api"),
+	sdk.WithoutSpanAttributes(ip...), // span, event and link attributes
+	sdk.WithoutLogAttributes(ip...),  // log record attributes
+)
+```
+
+Spans are filtered in a wrapper around the exporter, so an attribute added
+after the span started (otelgrpc sets `network.peer.*` in `HandleRPC`) is
+dropped too; log records are filtered before the batch processor. Metrics
+attributes are not touched.
+
 Build-time metadata passed through `WithService`, `WithVersion`, and
 `WithInstanceID` overrides matching values from `OTEL_SERVICE_NAME` and
 `OTEL_RESOURCE_ATTRIBUTES`.

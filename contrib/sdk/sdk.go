@@ -61,6 +61,8 @@ type config struct {
 	metricTimeout     time.Duration
 	views             []sdkmetric.View
 	sampler           sdktrace.Sampler
+	dropSpanAttrs     []attribute.Key
+	dropLogAttrs      []attribute.Key
 }
 
 // Option configures Setup.
@@ -236,7 +238,7 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 	}
 
 	if cfg.logs {
-		lp, err := newLoggerProvider(ctx, res)
+		lp, err := newLoggerProvider(ctx, res, cfg)
 		if err != nil {
 			_ = shutdown(ctx)
 			return nil, err
@@ -320,8 +322,12 @@ func newTracerProvider(ctx context.Context, res *resource.Resource, cfg config) 
 	if err != nil {
 		return nil, err
 	}
+	var spanExp sdktrace.SpanExporter = exp
+	if len(cfg.dropSpanAttrs) > 0 {
+		spanExp = newRedactingExporter(exp, cfg.dropSpanAttrs)
+	}
 	opts := []sdktrace.TracerProviderOption{
-		sdktrace.WithBatcher(exp),
+		sdktrace.WithBatcher(spanExp),
 		sdktrace.WithResource(res),
 	}
 	if cfg.sampler != nil {
@@ -350,7 +356,7 @@ func newMeterProvider(ctx context.Context, res *resource.Resource, cfg config) (
 	), nil
 }
 
-func newLoggerProvider(ctx context.Context, res *resource.Resource) (*sdklog.LoggerProvider, error) {
+func newLoggerProvider(ctx context.Context, res *resource.Resource, cfg config) (*sdklog.LoggerProvider, error) {
 	exp, err := logexport.New(ctx,
 		logexport.WithRetry(logexport.RetryConfig{
 			Enabled:         true,
@@ -363,8 +369,12 @@ func newLoggerProvider(ctx context.Context, res *resource.Resource) (*sdklog.Log
 	if err != nil {
 		return nil, err
 	}
+	var processor sdklog.Processor = sdklog.NewBatchProcessor(exp)
+	if len(cfg.dropLogAttrs) > 0 {
+		processor = newRedactingProcessor(processor, cfg.dropLogAttrs)
+	}
 	return sdklog.NewLoggerProvider(
-		sdklog.WithProcessor(sdklog.NewBatchProcessor(exp)),
+		sdklog.WithProcessor(processor),
 		sdklog.WithResource(res),
 	), nil
 }
