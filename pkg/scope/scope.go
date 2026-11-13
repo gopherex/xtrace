@@ -14,14 +14,25 @@ import (
 
 // Scope owns commonly used OpenTelemetry instruments for a component.
 type Scope struct {
-	name   string
-	tracer trace.Tracer
-	meter  metric.Meter
+	name        string
+	tracer      trace.Tracer
+	meter       metric.Meter
+	renderError func(error) string
 }
 
 type options struct {
 	tracerProvider trace.TracerProvider
 	meterProvider  metric.MeterProvider
+	renderError    func(error) string
+}
+
+// WithErrorRenderer renders the errors every Run of this scope records (see
+// span.WithErrorRenderer). Set it once on the service's scope; a Run option
+// still overrides it.
+func WithErrorRenderer(render func(error) string) Option {
+	return func(o *options) {
+		o.renderError = render
+	}
 }
 
 // Option configures a Scope.
@@ -54,9 +65,10 @@ func New(name string, opts ...Option) *Scope {
 		o.meterProvider = otel.GetMeterProvider()
 	}
 	return &Scope{
-		name:   name,
-		tracer: o.tracerProvider.Tracer(name),
-		meter:  o.meterProvider.Meter(name),
+		name:        name,
+		tracer:      o.tracerProvider.Tracer(name),
+		meter:       o.meterProvider.Meter(name),
+		renderError: o.renderError,
 	}
 }
 
@@ -86,5 +98,17 @@ func (s *Scope) Meter() metric.Meter {
 
 // Run starts a span on the scope tracer and executes f.
 func (s *Scope) Run(ctx context.Context, name string, f span.Func, opts ...span.Option) error {
+	if s != nil && s.renderError != nil {
+		opts = append([]span.Option{span.WithErrorRenderer(s.renderError)}, opts...)
+	}
 	return span.Run(ctx, s.Tracer(), name, f, opts...)
+}
+
+// ErrorRenderer returns the scope's error renderer (nil when unset), for
+// helpers that record errors outside Run, such as xtrace.Call.
+func (s *Scope) ErrorRenderer() func(error) string {
+	if s == nil {
+		return nil
+	}
+	return s.renderError
 }

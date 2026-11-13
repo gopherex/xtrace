@@ -31,6 +31,7 @@ type options struct {
 	recordError   bool
 	errorStatus   bool
 	recoverPanics bool
+	renderError   func(error) string // nil: err.Error()
 }
 
 // Option configures span helper behavior.
@@ -77,6 +78,17 @@ func WithErrorFilter(filter func(error) bool) Option {
 func WithStackTrace(extract func(error) string) Option {
 	return func(o *options) {
 		o.stackTrace = extract
+	}
+}
+
+// WithErrorRenderer renders a recorded error's text through render: the
+// exception event's exception.message and the span status description carry
+// render(err) instead of err.Error(). The exception type and stack stay. Use
+// it to keep URLs with tokens or database values out of traces (the same
+// renderer as xlog.WithErrorRenderer). A nil render keeps err.Error().
+func WithErrorRenderer(render func(error) string) Option {
+	return func(o *options) {
+		o.renderError = render
 	}
 }
 
@@ -189,15 +201,28 @@ func finish(sp trace.Span, o options, err *error) {
 
 func handleError(sp trace.Span, o options, err error) {
 	if o.recordError {
-		var opts []trace.EventOption
+		var attrs []attribute.KeyValue
 		if o.stackTrace != nil {
 			if stack := o.stackTrace(err); stack != "" {
-				opts = append(opts, trace.WithAttributes(attribute.String("exception.stacktrace", stack)))
+				attrs = append(attrs, attribute.String("exception.stacktrace", stack))
 			}
 		}
-		sp.RecordError(err, opts...)
+		if o.renderError == nil {
+			sp.RecordError(err, trace.WithAttributes(attrs...))
+		} else {
+			// RecordError would write err.Error(); write the same semantic
+			// exception event with the rendered text instead.
+			attrs = append(attrs,
+				attribute.String("exception.type", fmt.Sprintf("%T", err)),
+				attribute.String("exception.message", o.renderError(err)))
+			sp.AddEvent("exception", trace.WithAttributes(attrs...))
+		}
 	}
 	if o.errorStatus {
-		sp.SetStatus(codes.Error, err.Error())
+		text := err.Error()
+		if o.renderError != nil {
+			text = o.renderError(err)
+		}
+		sp.SetStatus(codes.Error, text)
 	}
 }

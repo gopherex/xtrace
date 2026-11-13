@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel/codes"
@@ -163,5 +164,49 @@ func BenchmarkRunWithStackTrace(b *testing.B) {
 	for b.Loop() {
 		_ = span.Run(context.Background(), tracer, "op", func(context.Context, trace.Span) error { return err },
 			span.WithStackTrace(stackOf))
+	}
+}
+
+// With an error renderer neither the exception event nor the status carry the
+// raw error text; the type and the stack stay. A panic is rendered too.
+func TestWithErrorRenderer(t *testing.T) {
+	t.Parallel()
+	render := func(err error) string { return "rendered: " + fmt.Sprintf("%T", err) }
+	for _, tc := range []struct {
+		name string
+		run  span.Func
+		opts []span.Option
+	}{
+		{name: "returned error", run: func(context.Context, trace.Span) error {
+			return fmt.Errorf("get https://h/p?token=secret: %w", stackErr{stack: "s.go:1"})
+		}, opts: []span.Option{span.WithStackTrace(stackOf)}},
+		{name: "recovered panic", run: func(context.Context, trace.Span) error {
+			panic(errors.New("token=secret"))
+		}, opts: []span.Option{span.WithRecoverPanics()}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tracer, ended := testTracer()
+			_ = span.Run(context.Background(), tracer, "op", tc.run, append(tc.opts, span.WithErrorRenderer(render))...)
+			sp := ended()[0]
+			if sp.Status.Code != codes.Error || !strings.HasPrefix(sp.Status.Description, "rendered: ") {
+				t.Fatalf("status %v", sp.Status)
+			}
+			if len(sp.Events) != 1 || sp.Events[0].Name != "exception" {
+				t.Fatalf("events %v", sp.Events)
+			}
+			attrs := map[string]string{}
+			for _, a := range sp.Events[0].Attributes {
+				attrs[string(a.Key)] = a.Value.Emit()
+			}
+			if !strings.HasPrefix(attrs["exception.message"], "rendered: ") || attrs["exception.type"] == "" {
+				t.Fatalf("exception attributes %v", attrs)
+			}
+			for _, v := range attrs {
+				if strings.Contains(v, "secret") {
+					t.Fatalf("raw error text leaked: %v", attrs)
+				}
+			}
+		})
 	}
 }

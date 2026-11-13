@@ -45,6 +45,19 @@ err := scope.Run(ctx, "charge", run,
 	xtrace.WithStackTrace(fault.Stack)) // the error's own stack as exception.stacktrace
 ```
 
+Error texts can carry what must not reach a trace (a `*url.Error` holds the
+full signed URL, a PostgreSQL error row values). Render them once per scope
+with the same renderer as the logger:
+
+```go
+render := xlog.NewErrorRenderer(xlog.RedactURL, xlogpgx.RedactPgError)
+scope := xtrace.New("billing.worker", xtrace.WithErrorRenderer(render))
+```
+
+Every `scope.Run` then records `exception.message` and the status description
+as `render(err)`; the exception type and stack stay, and the returned error is
+untouched. `WithSpanErrorRenderer` does the same for one `Run`/`Call`.
+
 `WithStackTrace(extract)` records what `extract` returns as
 `exception.stacktrace`; an empty result records none (a stack taken at the
 span's end would show only the helper's frames).

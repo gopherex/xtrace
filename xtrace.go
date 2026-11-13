@@ -72,6 +72,18 @@ func WithStackTrace(extract func(error) string) SpanOption {
 	return span.WithStackTrace(extract)
 }
 
+// WithErrorRenderer renders the errors every Run of the scope records through
+// render (exception.message, status description); pass the same renderer as
+// xlog.WithErrorRenderer.
+func WithErrorRenderer(render func(error) string) ScopeOption {
+	return scope.WithErrorRenderer(render)
+}
+
+// WithSpanErrorRenderer is WithErrorRenderer for a single Run/Call.
+func WithSpanErrorRenderer(render func(error) string) SpanOption {
+	return span.WithErrorRenderer(render)
+}
+
 func WithoutRecordError() SpanOption { return span.WithoutRecordError() }
 func WithoutErrorStatus() SpanOption { return span.WithoutErrorStatus() }
 func WithRecoverPanics() SpanOption  { return span.WithRecoverPanics() }
